@@ -38,11 +38,11 @@ public:
     image_msg_.data.reserve(img_info_.nHeightMax * img_info_.nWidthMax * 3);
 
     // Init convert param
-    ConvertParam_.nWidth = img_info_.nWidthMax;
-    ConvertParam_.nHeight = img_info_.nHeightMax;
+    ConvertParam_.nWidth = img_info_.nWidthValue;
+    ConvertParam_.nHeight = img_info_.nHeightValue;
     ConvertParam_.enDstPixelType = PixelType_Gvsp_RGB8_Packed;
 
-    bool use_sensor_data_qos = this->declare_parameter("use_sensor_data_qos", false);
+    bool use_sensor_data_qos = this->declare_parameter("use_sensor_data_qos", true);
     auto qos = use_sensor_data_qos ? rmw_qos_profile_sensor_data : rmw_qos_profile_default;
     camera_pub_ = image_transport::create_camera_publisher(this, "image_raw", qos);
 
@@ -85,11 +85,13 @@ public:
 
           MV_CC_ConvertPixelType(camera_handle_, &ConvertParam_);
 
-          camera_info_msg_.header.stamp = image_msg_.header.stamp = this->now();
+          image_msg_.header.stamp = this->now();
           image_msg_.height = OutFrame.stFrameInfo.nHeight;
           image_msg_.width = OutFrame.stFrameInfo.nWidth;
           image_msg_.step = OutFrame.stFrameInfo.nWidth * 3;
           image_msg_.data.resize(image_msg_.width * image_msg_.height * 3);
+
+          camera_info_msg_.header = image_msg_.header;
           camera_pub_.publish(image_msg_, camera_info_msg_);
 
           MV_CC_FreeImageBuffer(camera_handle_, &OutFrame);
