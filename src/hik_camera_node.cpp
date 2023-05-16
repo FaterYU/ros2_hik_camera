@@ -17,19 +17,19 @@ public:
   {
     RCLCPP_INFO(this->get_logger(), "Starting HikCameraNode!");
 
-    MV_CC_DEVICE_INFO_LIST DeviceList;
+    MV_CC_DEVICE_INFO_LIST device_list;
     // enum device
-    nRet = MV_CC_EnumDevices(MV_USB_DEVICE, &DeviceList);
-    RCLCPP_INFO(this->get_logger(), "Found camera count = %d", DeviceList.nDeviceNum);
+    nRet = MV_CC_EnumDevices(MV_USB_DEVICE, &device_list);
+    RCLCPP_INFO(this->get_logger(), "Found camera count = %d", device_list.nDeviceNum);
 
-    while (DeviceList.nDeviceNum == 0 && rclcpp::ok()) {
+    while (device_list.nDeviceNum == 0 && rclcpp::ok()) {
       RCLCPP_ERROR(this->get_logger(), "No camera found!");
       RCLCPP_INFO(this->get_logger(), "Enum state: [%x]", nRet);
       std::this_thread::sleep_for(std::chrono::seconds(1));
-      nRet = MV_CC_EnumDevices(MV_USB_DEVICE, &DeviceList);
+      nRet = MV_CC_EnumDevices(MV_USB_DEVICE, &device_list);
     }
 
-    MV_CC_CreateHandle(&camera_handle_, DeviceList.pDeviceInfo[0]);
+    MV_CC_CreateHandle(&camera_handle_, device_list.pDeviceInfo[0]);
 
     MV_CC_OpenDevice(camera_handle_);
 
@@ -38,9 +38,9 @@ public:
     image_msg_.data.reserve(img_info_.nHeightMax * img_info_.nWidthMax * 3);
 
     // Init convert param
-    ConvertParam_.nWidth = img_info_.nWidthValue;
-    ConvertParam_.nHeight = img_info_.nHeightValue;
-    ConvertParam_.enDstPixelType = PixelType_Gvsp_RGB8_Packed;
+    convert_param_.nWidth = img_info_.nWidthValue;
+    convert_param_.nHeight = img_info_.nHeightValue;
+    convert_param_.enDstPixelType = PixelType_Gvsp_RGB8_Packed;
 
     bool use_sensor_data_qos = this->declare_parameter("use_sensor_data_qos", true);
     auto qos = use_sensor_data_qos ? rmw_qos_profile_sensor_data : rmw_qos_profile_default;
@@ -67,7 +67,7 @@ public:
       std::bind(&HikCameraNode::parametersCallback, this, std::placeholders::_1));
 
     capture_thread_ = std::thread{[this]() -> void {
-      MV_FRAME_OUT OutFrame;
+      MV_FRAME_OUT out_frame;
 
       RCLCPP_INFO(this->get_logger(), "Publishing image!");
 
@@ -75,26 +75,26 @@ public:
       image_msg_.encoding = "rgb8";
 
       while (rclcpp::ok()) {
-        nRet = MV_CC_GetImageBuffer(camera_handle_, &OutFrame, 1000);
+        nRet = MV_CC_GetImageBuffer(camera_handle_, &out_frame, 1000);
         if (MV_OK == nRet) {
-          ConvertParam_.pDstBuffer = image_msg_.data.data();
-          ConvertParam_.nDstBufferSize = image_msg_.data.size();
-          ConvertParam_.pSrcData = OutFrame.pBufAddr;
-          ConvertParam_.nSrcDataLen = OutFrame.stFrameInfo.nFrameLen;
-          ConvertParam_.enSrcPixelType = OutFrame.stFrameInfo.enPixelType;
+          convert_param_.pDstBuffer = image_msg_.data.data();
+          convert_param_.nDstBufferSize = image_msg_.data.size();
+          convert_param_.pSrcData = out_frame.pBufAddr;
+          convert_param_.nSrcDataLen = out_frame.stFrameInfo.nFrameLen;
+          convert_param_.enSrcPixelType = out_frame.stFrameInfo.enPixelType;
 
-          MV_CC_ConvertPixelType(camera_handle_, &ConvertParam_);
+          MV_CC_ConvertPixelType(camera_handle_, &convert_param_);
 
           image_msg_.header.stamp = this->now();
-          image_msg_.height = OutFrame.stFrameInfo.nHeight;
-          image_msg_.width = OutFrame.stFrameInfo.nWidth;
-          image_msg_.step = OutFrame.stFrameInfo.nWidth * 3;
+          image_msg_.height = out_frame.stFrameInfo.nHeight;
+          image_msg_.width = out_frame.stFrameInfo.nWidth;
+          image_msg_.step = out_frame.stFrameInfo.nWidth * 3;
           image_msg_.data.resize(image_msg_.width * image_msg_.height * 3);
 
           camera_info_msg_.header = image_msg_.header;
           camera_pub_.publish(image_msg_, camera_info_msg_);
 
-          MV_CC_FreeImageBuffer(camera_handle_, &OutFrame);
+          MV_CC_FreeImageBuffer(camera_handle_, &out_frame);
         } else {
           RCLCPP_INFO(this->get_logger(), "Get buffer failed! nRet: [%x]", nRet);
           MV_CC_StopGrabbing(camera_handle_);
@@ -104,7 +104,7 @@ public:
     }};
   }
 
-  ~HikCameraNode()
+  ~HikCameraNode() override
   {
     if (capture_thread_.joinable()) {
       capture_thread_.join();
@@ -121,24 +121,24 @@ private:
   void declareParameters()
   {
     rcl_interfaces::msg::ParameterDescriptor param_desc;
-    MVCC_FLOATVALUE fValue;
+    MVCC_FLOATVALUE f_value;
     param_desc.integer_range.resize(1);
     param_desc.integer_range[0].step = 1;
     // Exposure time
     param_desc.description = "Exposure time in microseconds";
-    MV_CC_GetFloatValue(camera_handle_, "ExposureTime", &fValue);
-    param_desc.integer_range[0].from_value = fValue.fMin;
-    param_desc.integer_range[0].to_value = fValue.fMax;
+    MV_CC_GetFloatValue(camera_handle_, "ExposureTime", &f_value);
+    param_desc.integer_range[0].from_value = f_value.fMin;
+    param_desc.integer_range[0].to_value = f_value.fMax;
     double exposure_time = this->declare_parameter("exposure_time", 5000, param_desc);
     MV_CC_SetFloatValue(camera_handle_, "ExposureTime", exposure_time);
     RCLCPP_INFO(this->get_logger(), "Exposure time: %f", exposure_time);
 
     // Gain
     param_desc.description = "Gain";
-    MV_CC_GetFloatValue(camera_handle_, "Gain", &fValue);
-    param_desc.integer_range[0].from_value = fValue.fMin;
-    param_desc.integer_range[0].to_value = fValue.fMax;
-    double gain = this->declare_parameter("gain", fValue.fCurValue, param_desc);
+    MV_CC_GetFloatValue(camera_handle_, "Gain", &f_value);
+    param_desc.integer_range[0].from_value = f_value.fMin;
+    param_desc.integer_range[0].to_value = f_value.fMax;
+    double gain = this->declare_parameter("gain", f_value.fCurValue, param_desc);
     MV_CC_SetFloatValue(camera_handle_, "Gain", gain);
     RCLCPP_INFO(this->get_logger(), "Gain: %f", gain);
   }
@@ -177,7 +177,7 @@ private:
   void * camera_handle_;
   MV_IMAGE_BASIC_INFO img_info_;
 
-  MV_CC_PIXEL_CONVERT_PARAM ConvertParam_;
+  MV_CC_PIXEL_CONVERT_PARAM convert_param_;
 
   std::string camera_name_;
   std::unique_ptr<camera_info_manager::CameraInfoManager> camera_info_manager_;
